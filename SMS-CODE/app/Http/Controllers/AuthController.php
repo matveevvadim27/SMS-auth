@@ -13,13 +13,13 @@ use App\Services\SmsService;
 use Carbon\Carbon;
 
 use Illuminate\Http\JsonResponse;
-
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class AuthController extends Controller
 {
     protected SmsService $smsService;
-    protected int $codeExpirationMinutes = 5;
 
     public function __construct(SmsService $smsService)
     {
@@ -31,11 +31,21 @@ class AuthController extends Controller
 
         $phone = $request->input("phone");
         $action = $request->input('action', 'login');
-        $code = (string)rand(100000, 999999);
+        $code = $smsCodeService->generateCode();
 
         $user = User::where('phone', $phone)->first();
 
-        $smsCodeService->create($user, $action, $code);
+        $smsCodeService->cleanExpiredCodes();
+
+        try {
+            $smsCodeService->create($user, $action, $code, $phone);
+        } catch (\Exception $e) {
+            Log::warning("SendCode: Ошибка генерации кода для {$phone}: {$e->getMessage()}");
+
+            return response()->json([
+                'message' => 'Вы недавно запрашивали код. Попробуйте позже.',
+            ], 429);
+        }
 
         $this->smsService->sendVerificationCode($phone, "Ваш код подтверждения: {$code}");
 
@@ -45,24 +55,14 @@ class AuthController extends Controller
         ]);
     }
 
-    public function verifyCode(VerifyCodeRequest $request): JsonResponse
+    public function verifyCode(VerifyCodeRequest $request, SmsCodeService $smsCodeService): JsonResponse
     {
 
         $phone = $request->input('phone');
         $code = $request->input('code');
         $action = $request->input('action', 'login');
 
-        $smsCode = SmsCode::where('action', $action)
-            ->where('code', $code)
-            ->where('created_at', '>=', Carbon::now()->subMinutes($this->codeExpirationMinutes))
-            ->where(function ($query) use ($phone) {
-                $query->whereHas('user', function ($query) use ($phone) {
-                    $query->where('phone', $phone);
-                })
-                    ->orWhereNull('user_id');
-            })
-            ->latest()
-            ->first();
+        $smsCode = $smsCodeService->getValidCode($phone, $action, $code);
 
         if (!$smsCode) {
             throw new HttpException(400, 'Неверный или устаревший код подтверждения');
@@ -77,7 +77,7 @@ class AuthController extends Controller
             ]);
         }
 
-        $smsCode->delete();
+        $smsCodeService->deleteCode($smsCode);
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
@@ -86,33 +86,31 @@ class AuthController extends Controller
         ]);
     }
 
-    public function register(RegisterRequest $request)
+    public function register(RegisterRequest $request, SmsCodeService $smsCodeService)
     {
 
         $phone = $request->phone;
         $code = $request->code;
 
-
-        $smsCode = SmsCode::whereNull('user_id')
-            ->where('code', $code)
-            ->where('created_at', '>=', Carbon::now()->subMinutes($this->codeExpirationMinutes))
-            ->latest()
-            ->first();
+        $smsCode = $smsCodeService->getValidRegister($phone, $code);
 
         if (!$smsCode) {
             throw new HttpException(400, 'Неверный или устаревший код подтверждения');
         }
 
+        $user = DB::transaction(function () use ($request, $phone, $smsCode, $smsCodeService) {
+            $user = User::create([
+                'phone' => $phone,
+                'name' => $request->name,
+                'role' => 2,
+            ]);
 
-        $user = User::create([
-            'phone' => $phone,
-            'name' => $request->name,
-            'role' => 2,
-        ]);
+            $smsCode->update(['user_id' => $user->id]);
 
+            $smsCodeService->deleteCode($smsCode);
 
-        $smsCode->update(['user_id' => $user->id]);
-
+            return $user;
+        });
 
         $token = $user->createToken('auth_token')->plainTextToken;
 

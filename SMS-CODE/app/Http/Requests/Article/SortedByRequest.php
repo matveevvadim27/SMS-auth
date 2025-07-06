@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Http\Requests\Auth;
+namespace App\Http\Requests\Article;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class SendCodeRequest extends FormRequest
+class SortedByRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -19,15 +19,11 @@ class SendCodeRequest extends FormRequest
      *
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
      */
-    public function rules()
+    public function rules(): array
     {
         return [
-            'phone' => [
-                'required',
-                'string',
-                'regex:/^\+7\d{10}$/',
-            ],
-            'action' => 'sometimes|string',
+            'sort_by' => 'nullable|string|in:name,phone,role,id,created_at,deleted_at,status,visibility',
+            'sort_direction' => 'nullable|string|in:asc,desc'
         ];
     }
 }

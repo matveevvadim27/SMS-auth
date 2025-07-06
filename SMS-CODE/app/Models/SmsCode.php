@@ -13,6 +13,7 @@ class SmsCode extends Model
         'user_id',
         'action',
         'code',
+        'phone',
     ];
 
     public function user()

@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Http\Requests\Auth;
+namespace App\Http\Requests\Article;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class SendCodeRequest extends FormRequest
+class ArticleUpdateRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -21,13 +21,17 @@ class SendCodeRequest extends FormRequest
      */
     public function rules()
     {
+        $user = $this->route('user');
         return [
+            'name' => ['sometimes', 'string', 'max:50', 'regex:/^[A-Za-zА-Яа-яЁё\s]+$/u'],
             'phone' => [
-                'required',
+                'sometimes',
                 'string',
-                'regex:/^\+7\d{10}$/',
+                'regex:/^\+?[0-9]+$/',
+                'unique:users,phone,' . $user->id,
             ],
-            'action' => 'sometimes|string',
+            'visibility' => ['sometimes', 'string'],
+            'status' => ['sometimes', 'string'],
         ];
     }
 }

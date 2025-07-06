@@ -3,70 +3,127 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Article\ArticleCreateRequest;
+use App\Http\Requests\Article\ArticleUpdateRequest;
+use App\Http\Requests\Article\SortedByRequest;
+use App\Http\Resources\Article\ArticleDeletedResource;
+use App\Http\Resources\Article\ArticleResource;
 use Illuminate\Http\Request;
 use App\Models\Article;
-
+use Illuminate\Http\JsonResponse;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 
 class ArticleController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
-    public function index()
+
+    public function index(SortedByRequest $request)
     {
-        return response()->json(Article::all());
+        $orderParam = $request->input('sort_by', 'name');
+        $directionParam = $request->input('sort_direction', 'asc');
+        $trashed = $request->input('trashed', 'false');
+
+        $query = Article::query();
+
+        if ($trashed === 'true') {
+            $query = $query->onlyTrashed();
+            $articles = $query->orderBy($orderParam, $directionParam)->get();
+            return ArticleDeletedResource::collection($articles);
+        }
+
+        $articles = $query->orderBy($orderParam, $directionParam)->get();
+
+        return ArticleResource::collection($articles);
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
+
+    public function store(ArticleCreateRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'qr_code' => 'nullable|string|max:255',
-            'status' => 'required|string',
-            'visibility' => 'required|in:public,private',
-        ]);
+        $atricleData = $request->validated();
 
-        $article = Article::create($validated);
-
-        return response()->json($article, 201);
+        return new ArticleResource(Article::create($atricleData));
     }
 
-    /**
-     * Display the specified resource.
-     */
+
     public function show(Article $article)
     {
         return response()->json($article);
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, Article $article)
+    public function update(ArticleUpdateRequest $request, Article $article)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'qr_code' => 'nullable|string|max:255',
-            'status' => 'required|string',
-            'visibility' => 'required|in:public,private',
-        ]);
+        $validated = $request->validate();
 
         $article->update($validated);
 
-        return response()->json($article);
+        return new ArticleResource($article);
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Article $article)
+    public function destroy(int $id): JsonResponse
     {
-        $article->delete();
-        return response()->json(null, 204);
+        try {
+
+            $article = Article::withTrashed()->findOrFail($id);
+
+            if ($article->trashed()) {
+
+                $article->forceDelete();
+                $message = 'Статья полностью удалена';
+            } else {
+
+                $article->delete();
+                $message = 'Статья удалена';
+            }
+            return response()->json(['message' => $message], 200);
+        } catch (ModelNotFoundException $e) {
+
+            return response()->json(['message' => 'Статья с таким ID не найдена'], 404);
+        } catch (\Exception $e) {
+
+            return response()->json(['message' => 'Ошибка при удалении статьи'], 500);
+        }
+    }
+    public function search(Request $request)
+
+    {
+        $query = $request->input('query');
+
+        $article = Article::where('name', 'ilike', "%{$query}%")
+            ->orWhere('phone', 'ilike', "%{$query}%")
+            ->get();
+
+        return ArticleResource::collection($article);
+    }
+    public function searchTrashedArticles(Request $request)
+
+    {
+        $query = $request->input('query');
+
+        $article = Article::onlyTrashed()
+            ->where(function ($q) use ($query) {
+                $q->where('name', 'ilike', "%{$query}%")
+                    ->orWhere('phone', 'ilike', "%{$query}%");
+            })
+            ->get();
+
+        return ArticleDeletedResource::collection($article);
+    }
+    public function restore(int $id): JsonResponse
+    {
+        try {
+
+            $article = Article::withTrashed()->findOrFail($id);
+
+            if ($article->trashed()) {
+                $article->restore();
+                $message = 'Cтатья успешно восстановлена';
+                return response()->json(['message' => $message], 200);
+            } else {
+                return response()->json(['message' => 'Статья не был удалёна'], 400);
+            }
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['message' => 'Статьяс таким ID не найдена'], 404);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Ошибка при восстановлении статьи'], 500);
+        }
     }
 }
